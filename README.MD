@@ -34,4 +34,4 @@ This program sorts large CSV files that cannot fit into memory. It uses a divide
 ## Example
 
 ```bash
-java -jar target/parallel-csv-sorting-1.0-SNAPSHOT-jar-with-dependencies.jar 0 10 input.csv output.csv 2
+java -jar target/parallel-csv-sorting-1.0-SNAPSHOT-jar-with-dependencies.jar 0 50 input.csv output.csv 5
