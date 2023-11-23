@@ -1,7 +1,7 @@
 package com.csv.service;
 
 import com.csv.config.FileSorterArgs;
-import com.csv.model.ChunkDetails;
+import com.csv.model.ChunkGroupDetails;
 import com.csv.model.RecordPointer;
 import com.csv.util.FileUtil;
 import com.opencsv.CSVReader;
@@ -17,6 +17,7 @@ import java.util.PriorityQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 import static com.csv.util.FileUtil.getChunkFileName;
 import static com.csv.util.FileUtil.readChunk;
@@ -64,9 +65,9 @@ public class FileSorter {
 	}
 
 	private List<List<String>> sortChunk(int keyFieldIndex, List<List<String>> chunk) {
-		List<List<String>> sortedChunk = new ArrayList<>(chunk);
-		sortedChunk.sort(Comparator.comparing(o -> o.get(keyFieldIndex)));
-		return sortedChunk;
+		return chunk.parallelStream()
+				.sorted(Comparator.comparing(o -> o.get(keyFieldIndex)))
+				.collect(Collectors.toList());
 	}
 
 	public void externalMergeSortFile(FileSorterArgs args) {
@@ -99,8 +100,8 @@ public class FileSorter {
 				// Merge chunks within a group
 				CompletableFuture<Void> chunkMergeFuture = CompletableFuture.runAsync(() -> {
 					try {
-						ChunkDetails chunkDetails = new ChunkDetails(finalPassNumber, finalIndex, endIndex, finalCurrentPassChunkNumber);
-						mergeChunksByRecordsLimit(args, chunkDetails);
+						ChunkGroupDetails chunkGroupDetails = new ChunkGroupDetails(finalPassNumber, finalIndex, endIndex, finalCurrentPassChunkNumber);
+						mergeChunkGroupByRecordsLimit(args, chunkGroupDetails);
 					} catch (IOException | CsvValidationException e) {
 						throw new RuntimeException(e);
 					}
@@ -125,12 +126,12 @@ public class FileSorter {
 		executorService.shutdown();
 	}
 
-	private void mergeChunksByRecordsLimit(FileSorterArgs args, ChunkDetails chunkDetails) throws IOException, CsvValidationException {
+	private void mergeChunkGroupByRecordsLimit(FileSorterArgs args, ChunkGroupDetails chunkGroupDetails) throws IOException, CsvValidationException {
 		PriorityQueue<RecordPointer> minHeap = new PriorityQueue<>(Comparator.comparing(o -> o.getCurrentRecord().get(args.keyFieldIndex)));
-		int passNumber = chunkDetails.getPassNumber();
+		int passNumber = chunkGroupDetails.getPassNumber();
 
 		// Initialize the heap with the first record from each remaining chunk
-		for (int i = chunkDetails.getStartIndex(); i < chunkDetails.getEndIndex(); i++) {
+		for (int i = chunkGroupDetails.getStartIndex(); i < chunkGroupDetails.getEndIndex(); i++) {
 			String chunkFileName = getChunkFileName(i, passNumber);
 			CSVReader csvReader = new CSVReader(new FileReader(chunkFileName));
 			RecordPointer recordPointer = new RecordPointer(csvReader);
@@ -141,7 +142,7 @@ public class FileSorter {
 			}
 		}
 
-		String outputFileName = getChunkFileName(chunkDetails.getChunkNumber(), passNumber + 1);
+		String outputFileName = getChunkFileName(chunkGroupDetails.getChunkNumber(), passNumber + 1);
 		try (FileWriter writer = new FileWriter(outputFileName)) {
 			while (!minHeap.isEmpty()) {
 				RecordPointer smallest = minHeap.poll();

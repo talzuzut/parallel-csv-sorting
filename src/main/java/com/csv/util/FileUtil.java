@@ -15,6 +15,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class FileUtil {
 	public final static String TEMP_DIR = "temp";
@@ -61,9 +62,10 @@ public class FileUtil {
 	public static void writeChunkToFile(List<List<String>> fileChunk, String chunkFileName) {
 
 		try (CSVWriter csvWriter = new CSVWriter(new FileWriter(chunkFileName))) {
-			for (List<String> record : fileChunk) {
-				csvWriter.writeNext(record.toArray(new String[0]));
-			}
+			List<String[]> data = fileChunk.stream()
+					.map(list -> list.toArray(new String[0]))
+					.collect(Collectors.toList());
+			csvWriter.writeAll(data);
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}

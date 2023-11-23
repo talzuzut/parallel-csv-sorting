@@ -1,12 +1,12 @@
 package com.csv.model;
 
-public class ChunkDetails {
+public class ChunkGroupDetails {
 	private final int passNumber;
 	private final int startIndex;
 	private final int endIndex;
 	private final int chunkNumber;
 
-	public ChunkDetails(int passNumber, int startIndex, int endIndex, int chunkNumber) {
+	public ChunkGroupDetails(int passNumber, int startIndex, int endIndex, int chunkNumber) {
 		this.passNumber = passNumber;
 		this.startIndex = startIndex;
 		this.endIndex = endIndex;
