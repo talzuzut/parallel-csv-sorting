@@ -5,6 +5,7 @@ import com.csv.Main;
 import com.csv.config.FileSorterArgs;
 import com.opencsv.CSVReader;
 import com.opencsv.CSVWriter;
+import com.opencsv.CSVWriterBuilder;
 import com.opencsv.exceptions.CsvValidationException;
 
 import java.io.File;
@@ -59,19 +60,18 @@ public class FileUtil {
 	}
 
 
-	public static void writeChunkToFile(List<List<String>> fileChunk, String chunkFileName) {
-
-		try (CSVWriter csvWriter = new CSVWriter(new FileWriter(chunkFileName))) {
-			List<String[]> data = fileChunk.stream()
-					.map(list -> list.toArray(new String[0]))
-					.collect(Collectors.toList());
-			csvWriter.writeAll(data);
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
-
-
-	}
+public static void writeChunkToFile(List<List<String>> fileChunk, String chunkFileName) {
+    try (CSVWriter csvWriter = (CSVWriter) new CSVWriterBuilder(new FileWriter(chunkFileName))
+            .withQuoteChar(CSVWriter.NO_QUOTE_CHARACTER)
+            .build()) {
+        List<String[]> data = fileChunk.stream()
+                .map(list -> list.toArray(new String[0]))
+                .collect(Collectors.toList());
+        csvWriter.writeAll(data);
+    } catch (IOException e) {
+        throw new RuntimeException(e);
+    }
+}
 
 	public static String getChunkFileName(int chunkNumber, int passNumber) {
 		return Main.tempFolder.getName() + File.separator + "pass_" + passNumber + "_chunk_" + chunkNumber + ".csv";
