@@ -14,22 +14,15 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
+import java.util.concurrent.*;
 
-import static com.csv.util.FileUtil.getChunkFileName;
-import static com.csv.util.FileUtil.readChunk;
+import static com.csv.util.FileUtil.*;
 
 public class FileSorter {
 
 	public int splitToSortedRecordsChunks(FileSorterArgs args) throws IOException, CsvValidationException {
 		int chunkNumber = 0;
 		try (CSVReader csvReader = new CSVReader(new FileReader(args.inputFileName))) {
-			ExecutorService executorService = Executors.newFixedThreadPool(args.numThreads);
-			List<CompletableFuture<Void>> futures = new ArrayList<>();
-
 			while (true) {
 				List<List<String>> recordsChunk = readChunk(args.maxRecordsInMemory, csvReader);
 				if (recordsChunk.isEmpty()) {
@@ -37,37 +30,29 @@ public class FileSorter {
 				}
 				// If the file is small enough to fit in memory, sort it in memory
 				if (recordsChunk.size() < args.maxRecordsInMemory) {
-					sortAllFileInOneChunk(args, recordsChunk, executorService, futures);
+					sortAllFileInOneChunk(args, recordsChunk);
 					return 1;
 				}
 				List<List<String>> sortedRecordsChunk = sortChunk(args.keyFieldIndex, recordsChunk);
 				String chunkFileName = getChunkFileName(chunkNumber, 0);
-				CompletableFuture<Void> future = CompletableFuture.runAsync(() -> FileUtil.writeChunkToFile(sortedRecordsChunk, chunkFileName), executorService);
-				futures.add(future);
+				writeChunkToFile(sortedRecordsChunk, chunkFileName);
 
 				chunkNumber++;
 			}
 
-			CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-			executorService.shutdown();
 		}
 
 		return chunkNumber;
 	}
 
-	private void sortAllFileInOneChunk(FileSorterArgs args, List<List<String>> recordsChunk, ExecutorService executorService, List<CompletableFuture<Void>> futures) {
+	private void sortAllFileInOneChunk(FileSorterArgs args, List<List<String>> recordsChunk) {
 		List<List<String>> sortedRecordsChunk = sortChunk(args.keyFieldIndex, recordsChunk);
-		CompletableFuture<Void> future = CompletableFuture.runAsync(() -> FileUtil.writeChunkToFile(sortedRecordsChunk, args.outputFileName), executorService);
-		futures.add(future);
-		CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-		executorService.shutdown();
-		FileUtil.createFinalOutputFile(args, 0);
+		writeChunkToFile(sortedRecordsChunk, args.outputFileName);
 	}
 
 	private List<List<String>> sortChunk(int keyFieldIndex, List<List<String>> chunk) {
-		return chunk.parallelStream()
-				.sorted(Comparator.comparing(o -> o.get(keyFieldIndex)))
-				.collect(Collectors.toList());
+		chunk.sort(Comparator.comparing(o -> o.get(keyFieldIndex)));
+		return chunk;
 	}
 
 	public void externalMergeSortFile(FileSorterArgs args) {
@@ -82,39 +67,19 @@ public class FileSorter {
 	public void mergeAllSortedChunks(FileSorterArgs args, int initialTotalChunks) throws IOException, CsvValidationException {
 		int passNumber = 0;
 		int totalChunks = initialTotalChunks;
-		ExecutorService executorService = Executors.newFixedThreadPool(args.numThreads);
 
 		while (totalChunks > 1) {
-			List<CompletableFuture<Void>> mergeFutures = new ArrayList<>();
 			int currentPassChunkNumber = 0;
 
-			// Split merging into groups of maxRecordsInMemory
 			for (int index = 0; index < totalChunks; index += args.maxRecordsInMemory) {
 				int endIndex = Math.min(index + args.maxRecordsInMemory, totalChunks);
-				List<CompletableFuture<Void>> chunkMergeFutures = new ArrayList<>();
-
-				int finalPassNumber = passNumber;
-				int finalIndex = index;
-				int finalCurrentPassChunkNumber = currentPassChunkNumber;
 
 				// Merge chunks within a group
-				CompletableFuture<Void> chunkMergeFuture = CompletableFuture.runAsync(() -> {
-					try {
-						ChunkGroupDetails chunkGroupDetails = new ChunkGroupDetails(finalPassNumber, finalIndex, endIndex, finalCurrentPassChunkNumber);
-						mergeChunkGroupByRecordsLimit(args, chunkGroupDetails);
-					} catch (IOException | CsvValidationException e) {
-						throw new RuntimeException(e);
-					}
-				}, executorService);
+				ChunkGroupDetails chunkGroupDetails = new ChunkGroupDetails(passNumber, index, endIndex, currentPassChunkNumber);
+				mergeChunkGroupByRecordsLimit(args, chunkGroupDetails);
 
-				chunkMergeFutures.add(chunkMergeFuture);
-
-				CompletableFuture<Void> groupMergeFuture = CompletableFuture.allOf(chunkMergeFutures.toArray(new CompletableFuture[0]));
-				mergeFutures.add(groupMergeFuture);
 				currentPassChunkNumber++;
 			}
-
-			CompletableFuture.allOf(mergeFutures.toArray(new CompletableFuture[0])).join();
 
 			totalChunks = (int) Math.ceil((double) totalChunks / args.maxRecordsInMemory);
 			passNumber++;
@@ -122,23 +87,33 @@ public class FileSorter {
 				FileUtil.createFinalOutputFile(args, passNumber);
 			}
 		}
-
-		executorService.shutdown();
 	}
-
 	private void mergeChunkGroupByRecordsLimit(FileSorterArgs args, ChunkGroupDetails chunkGroupDetails) throws IOException, CsvValidationException {
 		PriorityQueue<RecordPointer> minHeap = new PriorityQueue<>(Comparator.comparing(o -> o.getCurrentRecord().get(args.keyFieldIndex)));
 		int passNumber = chunkGroupDetails.getPassNumber();
+		ExecutorService executor = Executors.newFixedThreadPool(args.numThreads);
 
 		// Initialize the heap with the first record from each remaining chunk
+		List<Future<RecordPointer>> futures = new ArrayList<>();
 		for (int i = chunkGroupDetails.getStartIndex(); i < chunkGroupDetails.getEndIndex(); i++) {
-			String chunkFileName = getChunkFileName(i, passNumber);
-			CSVReader csvReader = new CSVReader(new FileReader(chunkFileName));
-			RecordPointer recordPointer = new RecordPointer(csvReader);
-			List<String> currentRecord = recordPointer.getCurrentRecord();
+			final int index = i;
+			futures.add(executor.submit(() -> {
+				String chunkFileName = getChunkFileName(index, passNumber);
+				CSVReader csvReader = new CSVReader(new FileReader(chunkFileName));
+				RecordPointer recordPointer = new RecordPointer(csvReader);
+				List<String> currentRecord = recordPointer.getCurrentRecord();
+				return currentRecord != null ? recordPointer : null;
+			}));
+		}
 
-			if (currentRecord != null) {
-				minHeap.add(recordPointer);
+		for (Future<RecordPointer> future : futures) {
+			try {
+				RecordPointer recordPointer = future.get();
+				if (recordPointer != null) {
+					minHeap.add(recordPointer);
+				}
+			} catch (InterruptedException | ExecutionException e) {
+				e.printStackTrace();
 			}
 		}
 
@@ -156,5 +131,6 @@ public class FileSorter {
 				}
 			}
 		}
+		executor.shutdown();
 	}
 }
