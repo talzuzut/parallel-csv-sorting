@@ -6,6 +6,7 @@ public class FileSorterArgs {
 	public String inputFileName;
 	public String outputFileName;
 	public int numThreads;
+	public String tempFolder;
 
 	public FileSorterArgs(String[] args) {
 		keyFieldIndex = Integer.parseInt(args[0]);

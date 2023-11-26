@@ -14,17 +14,23 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.concurrent.*;
-
-import static com.csv.util.FileUtil.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class FileSorter {
+	private final FileUtil fileUtil;
+
+	public FileSorter(FileUtil fileUtil) {
+		this.fileUtil = fileUtil;
+	}
 
 	public int splitToSortedRecordsChunks(FileSorterArgs args) throws IOException, CsvValidationException {
 		int chunkNumber = 0;
-		try (CSVReader csvReader = new CSVReader(new FileReader(args.inputFileName))) {
+		try (CSVReader csvReader = fileUtil.createCSVReader(args.inputFileName)) {
 			while (true) {
-				List<List<String>> recordsChunk = readChunk(args.maxRecordsInMemory, csvReader);
+				List<List<String>> recordsChunk = fileUtil.readChunk(args.maxRecordsInMemory, csvReader);
 				if (recordsChunk.isEmpty()) {
 					break;
 				}
@@ -34,8 +40,8 @@ public class FileSorter {
 					return 1;
 				}
 				List<List<String>> sortedRecordsChunk = sortChunk(args.keyFieldIndex, recordsChunk);
-				String chunkFileName = getChunkFileName(chunkNumber, 0);
-				writeChunkToFile(sortedRecordsChunk, chunkFileName);
+				String chunkFileName = fileUtil.getChunkFileName(args, chunkNumber, 0);
+				fileUtil.writeChunkToFile(sortedRecordsChunk, chunkFileName);
 
 				chunkNumber++;
 			}
@@ -45,9 +51,9 @@ public class FileSorter {
 		return chunkNumber;
 	}
 
-	private void sortAllFileInOneChunk(FileSorterArgs args, List<List<String>> recordsChunk) {
+	public void sortAllFileInOneChunk(FileSorterArgs args, List<List<String>> recordsChunk) {
 		List<List<String>> sortedRecordsChunk = sortChunk(args.keyFieldIndex, recordsChunk);
-		writeChunkToFile(sortedRecordsChunk, args.outputFileName);
+		fileUtil.writeChunkToFile(sortedRecordsChunk, args.outputFileName);
 	}
 
 	private List<List<String>> sortChunk(int keyFieldIndex, List<List<String>> chunk) {
@@ -84,21 +90,22 @@ public class FileSorter {
 			totalChunks = (int) Math.ceil((double) totalChunks / args.maxRecordsInMemory);
 			passNumber++;
 			if (totalChunks == 1) {
-				FileUtil.createFinalOutputFile(args, passNumber);
+				fileUtil.createFinalOutputFile(args, passNumber);
 			}
 		}
 	}
+
 	private void mergeChunkGroupByRecordsLimit(FileSorterArgs args, ChunkGroupDetails chunkGroupDetails) throws IOException, CsvValidationException {
 		PriorityQueue<RecordPointer> minHeap = new PriorityQueue<>(Comparator.comparing(o -> o.getCurrentRecord().get(args.keyFieldIndex)));
 		int passNumber = chunkGroupDetails.getPassNumber();
-		ExecutorService executor = Executors.newFixedThreadPool(args.numThreads);
+		ExecutorService executor = createExecutorService(args.numThreads);
 
 		// Initialize the heap with the first record from each remaining chunk
 		List<Future<RecordPointer>> futures = new ArrayList<>();
 		for (int i = chunkGroupDetails.getStartIndex(); i < chunkGroupDetails.getEndIndex(); i++) {
 			final int index = i;
 			futures.add(executor.submit(() -> {
-				String chunkFileName = getChunkFileName(index, passNumber);
+				String chunkFileName = fileUtil.getChunkFileName(args, index, passNumber);
 				CSVReader csvReader = new CSVReader(new FileReader(chunkFileName));
 				RecordPointer recordPointer = new RecordPointer(csvReader);
 				List<String> currentRecord = recordPointer.getCurrentRecord();
@@ -117,7 +124,7 @@ public class FileSorter {
 			}
 		}
 
-		String outputFileName = getChunkFileName(chunkGroupDetails.getChunkNumber(), passNumber + 1);
+		String outputFileName = fileUtil.getChunkFileName(args, chunkGroupDetails.getChunkNumber(), passNumber + 1);
 		try (FileWriter writer = new FileWriter(outputFileName)) {
 			while (!minHeap.isEmpty()) {
 				RecordPointer smallest = minHeap.poll();
@@ -132,5 +139,9 @@ public class FileSorter {
 			}
 		}
 		executor.shutdown();
+	}
+
+	public ExecutorService createExecutorService(int numThreads) {
+		return Executors.newFixedThreadPool(numThreads);
 	}
 }

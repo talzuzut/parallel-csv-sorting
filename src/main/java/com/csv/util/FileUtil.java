@@ -8,9 +8,7 @@ import com.opencsv.CSVWriter;
 import com.opencsv.CSVWriterBuilder;
 import com.opencsv.exceptions.CsvValidationException;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -21,7 +19,17 @@ import java.util.stream.Collectors;
 public class FileUtil {
 	public final static String TEMP_DIR = "temp";
 
-	public static File createTempFolder() {
+	public CSVReader createCSVReader(String inputFileName) throws FileNotFoundException {
+		return new CSVReader(new FileReader(inputFileName));
+	}
+
+	public CSVWriter createCSVWriter(String outputFileName) throws IOException {
+		return (CSVWriter) new CSVWriterBuilder(new FileWriter(outputFileName))
+				.withQuoteChar(CSVWriter.NO_QUOTE_CHARACTER)
+				.build();
+	}
+
+	public File createTempFolder() {
 		String projectDirectory = System.getProperty("user.dir");
 		File tempFolder = new File(projectDirectory, TEMP_DIR);
 		if (tempFolder.exists()) {
@@ -34,7 +42,7 @@ public class FileUtil {
 		return tempFolder;
 	}
 
-	public static void deleteFolder(File folder) {
+	public void deleteFolder(File folder) {
 		if (folder.isDirectory()) {
 			File[] files = folder.listFiles();
 			if (files != null) {
@@ -46,7 +54,7 @@ public class FileUtil {
 		folder.delete();
 	}
 
-	public static List<List<String>> readChunk(int maxRecordsInMemory, CSVReader csvReader) throws IOException, CsvValidationException {
+	public List<List<String>> readChunk(int maxRecordsInMemory, CSVReader csvReader) throws IOException, CsvValidationException {
 		List<List<String>> records = new ArrayList<>();
 		for (int i = 0; i < maxRecordsInMemory; i++) {
 			String[] values = csvReader.readNext();
@@ -60,30 +68,29 @@ public class FileUtil {
 	}
 
 
-public static void writeChunkToFile(List<List<String>> fileChunk, String chunkFileName) {
-    try (CSVWriter csvWriter = (CSVWriter) new CSVWriterBuilder(new FileWriter(chunkFileName))
-            .withQuoteChar(CSVWriter.NO_QUOTE_CHARACTER)
-            .build()) {
-        List<String[]> data = fileChunk.stream()
-                .map(list -> list.toArray(new String[0]))
-                .collect(Collectors.toList());
-        csvWriter.writeAll(data);
-    } catch (IOException e) {
-        throw new RuntimeException(e);
-    }
-}
-
-	public static String getChunkFileName(int chunkNumber, int passNumber) {
-		return Main.tempFolder.getName() + File.separator + "pass_" + passNumber + "_chunk_" + chunkNumber + ".csv";
+	public void writeChunkToFile(List<List<String>> fileChunk, String chunkFileName) {
+		try (CSVWriter csvWriter = createCSVWriter(chunkFileName)) {
+			List<String[]> data = fileChunk.stream()
+					.map(list -> list.toArray(new String[0]))
+					.collect(Collectors.toList());
+			csvWriter.writeAll(data);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
 	}
 
-	public static void createFinalOutputFile(FileSorterArgs args, int passNumber) {
+	public String getChunkFileName(FileSorterArgs args, int chunkNumber, int passNumber) {
+		String tempFolderName = args.tempFolder != null ? args.tempFolder : Main.tempFolder.getName();
+		return tempFolderName + File.separator + "pass_" + passNumber + "_chunk_" + chunkNumber + ".csv";
+	}
+
+	public void createFinalOutputFile(FileSorterArgs args, int passNumber) {
 		String projectDirectory = System.getProperty("user.dir");
 		String finalOutputFileName = args.outputFileName;
 
 		Path outputPath = Paths.get(projectDirectory, finalOutputFileName);
 
-		String chunkFileName = getChunkFileName(0, passNumber);
+		String chunkFileName = getChunkFileName(args, 0, passNumber);
 		File chunkFile = new File(chunkFileName);
 
 		if (chunkFile.exists()) {
